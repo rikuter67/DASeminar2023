@@ -72,6 +72,7 @@ if __name__ == "__main__":
 	print("loss={0:.3}".format(regression.loss(myData.xTest,myData.yTest)))
 
 	predict = regression.predict(myData.xTest)
+	pdb.set_trace()
 	myData.plot(predict,isTrainPlot=False)
 	
 #-------------------
