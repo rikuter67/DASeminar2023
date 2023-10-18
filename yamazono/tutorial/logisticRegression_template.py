@@ -22,6 +22,7 @@ class logisticRegression(classifier.basic):
 		tDim = t.shape[0]
 		self.W = np.random.normal(0.0, pow(xDim, -0.5), (xDim, tDim))
 		self.b = np.random.normal(0.0, pow(tDim, -0.5), (tDim, 1))
+		
 	#------------------------------------
 
 	#------------------------------------
@@ -44,13 +45,17 @@ class logisticRegression(classifier.basic):
 
 		# データ数
 		dNum = x.shape[1]
-		
-		# Wの更新
+
+		# 予測と目標値の差
 		predict_minus_t = self.predict(x) - t
-		self.W -= alpha * 0 # 【wの勾配の計算】
 		
-		# bの更新
-		self.b -= alpha * 0 # 【bの勾配の計算】	
+		# Wの勾配の計算
+		grad_W = np.dot(x, (predict_minus_t).T)
+		# bの勾配の計算
+		grad_b = np.sum(predict_minus_t, axis=1, keepdims=True)
+
+		self.W -= alpha * grad_W  # wの更新
+		self.b -= alpha * grad_b  # bの更新
 
 		# 交差エントロピーとAccuracyを標準出力
 		if printEval:
@@ -67,8 +72,9 @@ class logisticRegression(classifier.basic):
 	# 4) 交差エントロピーの計算
 	# x: 入力データ（入力ベクトルの次元数×データ数のnumpy.array）
 	# t: one-hot学習カテゴリデータ（カテゴリ数×データ数のnumpy.array）
-	def loss(self, x,t):
-		crossEntropy =  0		#【交差エントロピーの計算】
+	def loss(self, x, t):
+		y = self.predict(x)
+		crossEntropy = -np.sum(t * np.log(y + 1e-10)) / x.shape[1]  # 1e-10は数値安定性のために追加
 		return crossEntropy
 	#------------------------------------
 
@@ -93,12 +99,11 @@ if __name__ == "__main__":
 
 	# 2）ロジスティック回帰（2階層のニューラルネットワーク）モデルの作成
 	classifier = logisticRegression(myData.xTrain, myData.tTrain)
-
 	# 3）学習前の事後確率と学習データの描画
 	myData.plotClassifier(classifier,"train",prefix="posterior_before")
 
 	# 4）モデルの学習
-	Nite = 1000  # 更新回数
+	Nite = 10  # 更新回数
 	learningRate = 0.1  # 学習率
 	decayRate = 0.99  # 減衰率
 	for ite in np.arange(Nite):

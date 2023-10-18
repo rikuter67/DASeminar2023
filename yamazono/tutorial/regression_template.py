@@ -57,6 +57,7 @@ if __name__ == "__main__":
 	#myData = rg.artificial(200,100, dataType="1D",isNonlinear=True)
 	
 	#regression = linearRegression(myData.xTrain,myData.yTrain)
+	pdb.set_trace()
 	regression = linearRegression(myData.xTrain,myData.yTrain,kernelType="gaussian",kernelParam=1)
 	
 	sTime = time.time()
@@ -72,7 +73,6 @@ if __name__ == "__main__":
 	print("loss={0:.3}".format(regression.loss(myData.xTest,myData.yTest)))
 
 	predict = regression.predict(myData.xTest)
-	pdb.set_trace()
 	myData.plot(predict,isTrainPlot=False)
 	
 #-------------------
