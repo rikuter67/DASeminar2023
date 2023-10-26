@@ -21,7 +21,7 @@ class artificial:
 		
 		# dataTypeによって1Dと2Dを切り替え
 		self.dataType = dataType
-		self.xRange = [-2, 8]
+		self.xRange = [-40, 40]
 		self.prefix = dataType
 		
 		xRangeWidth = self.xRange[1] - self.xRange[0]

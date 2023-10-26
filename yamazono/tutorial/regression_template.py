@@ -19,18 +19,11 @@ class linearRegression():
 	#------------------------------------
 
 	#------------------------------------
-	# 学習(For文)ここでは割愛
-	def train(self):
-		self.w = np.zeros([self.xDim,1])
-	#------------------------------------
-
-	#------------------------------------
 	# 最小二乗法における重みの計算
 	def trainMat(self):
-		#self.x.shape #(N,200) (入力次元: 1, データ数：200)
-		ones = np.ones((1,self.dNum))
-		x_dash = np.concatenate([self.x, ones], axis=0) # バイアスも計算できるように説明変数に１を追加
-		self.w_dash = np.matmul(np.linalg.inv(np.matmul(x_dash, x_dash.T)), np.sum((self.y * x_dash), axis=1))
+		ones = np.ones((1, self.dNum))
+		x_dash = np.concatenate([self.x, ones], axis=0)
+		self.w_dash = np.linalg.inv(x_dash @ x_dash.T) @ np.sum(self.y * x_dash, axis=1)
 	#------------------------------------
 	
 	#------------------------------------
@@ -41,9 +34,9 @@ class linearRegression():
 
 	#------------------------------------
 	# 損失関数
-	def loss(self,x,y):
-		loss = 0.0
-		loss = np.sum(y - self.predict(x))
+	def loss(self, x, y):
+		y_pred = self.predict(x)
+		loss = np.sum((y - y_pred)**2)
 		return loss
 	#------------------------------------
 # �N���X�̒�`�I���
@@ -57,13 +50,7 @@ if __name__ == "__main__":
 	#myData = rg.artificial(200,100, dataType="1D",isNonlinear=True)
 	
 	#regression = linearRegression(myData.xTrain,myData.yTrain)
-	pdb.set_trace()
 	regression = linearRegression(myData.xTrain,myData.yTrain,kernelType="gaussian",kernelParam=1)
-	
-	sTime = time.time()
-	regression.train()
-	eTime = time.time()
-	print("train with for-loop: time={0:.4} sec".format(eTime-sTime))
 	
 	sTime = time.time()
 	regression.trainMat()

@@ -14,25 +14,23 @@ import pdb
 warnings.filterwarnings('ignore')
 pd.set_option('display.max_columns', 150)
 
-path = "/Users/remi/dataAnalysis/dataAnalysis2022/preprocessing/titanic/dataset/"
+path = "/home/yamazono/DASeminar2023/yamazono/titanic/dataset/"
 
 df = pd.read_csv(path + 'train.csv')
 df_test = pd.read_csv(path + 'test.csv')
-pdb.set_trace()
-
 
 ## -------------------------------------------------
 ## データの前処理
 
 ## -------------------------------------------------
 
-pdb.set_trace()
+# 特徴量とターゲット変数を選択
+features = ['Pclass', 'Sex', 'Age', 'SibSp', 'Parch', 'Fare', 'Embarked']
+target = 'Survived'
 
-## ベースラインモデルの構築
-X = df.iloc[:, 2:].values
-y = df.iloc[:, 1].values
-
-X_test = df_test.iloc[:, 1:].values
+X = df[features]
+y = df[target]
+X_test = df_test[features]  # テストデータにはターゲット変数がない
 
 X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.3, random_state=42)
 
@@ -67,9 +65,7 @@ mlpc_pred = mlpc.predict_proba(X_test)
 pred_proba = (rfc_pred + lr_pred + mlpc_pred) / 3
 pred = pred_proba.argmax(axis=1)
 
-'''
 ## 提出
 submission = pd.read_csv(path + 'gender_submission.csv')
-submission['Perished'] = pred
-submission.to_csv(path + 'submission.csv', index=False)
-'''
+submission['Survived'] = pred
+submission.to_csv(path + 'gender_submission.csv', index=False)
