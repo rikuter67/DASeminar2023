@@ -3,7 +3,7 @@ import json
 
 import numpy as np
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
+# import plotly.graph_objects as go
 
 def read_disparity_raw(rawfile_path: str, inf_DP: float):
     '''------------------------------------------------------------------------------ 
@@ -33,11 +33,8 @@ def read_disparity_raw(rawfile_path: str, inf_DP: float):
             # 右画像座標位置に対応する視差画像座標を求める
             disparity_j = int((right_image_height - right_j - 1) / 4) 	# 縦座標　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　				#視差画像と右画像は原点が左下と左上で違うため上下反転
             disparity_i = int(right_i / 4)  		# 横座標
-            # pdb.set_trace()
-            # 視差を読み込む   
             disparity =  disparity_image[(disparity_j * disparity_image_width + disparity_i) * 2]                       # 整数視差読み込み
-            # disparity += disparity_image[(disparity_j * disparity_image_width + disparity_i) * 2 + 1] / 256     # 小数視差読み込み
-            # pdb.set_trace()
+            disparity += disparity_image[(disparity_j * disparity_image_width + disparity_i) * 2 + 1] / 256     # 小数視差読み込み
             # 視差を距離へ変換
             if disparity > 0:			 # disparity =0 は距離情報がない
                 # pdb.set_trace()
