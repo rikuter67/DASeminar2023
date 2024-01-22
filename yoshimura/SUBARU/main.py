@@ -1,97 +1,270 @@
 import os
 import json
 import pdb
+import sys
 
 import cv2
 import numpy as np
 from tqdm import tqdm
 from scipy import stats
-import plotly.graph_objects as go
+from PIL import Image
+# import plotly.graph_objects as go
+# from ultralytics import YOLO
+# import torch
 
 from read_disparity import read_disparity_raw
-from processing import pre_processing
-from metrics import frame_error
+# from processing import pre_processing
+# from metrics import frame_error
 from utils import *
 
+from torchvision.io.image import read_image
+from torchvision.models.segmentation import fcn_resnet50, FCN_ResNet50_Weights
+from torchvision.transforms.functional import to_pil_image
+from torchvision.models.detection import maskrcnn_resnet50_fpn, MaskRCNN_ResNet50_FPN_Weights
 
-def main():
-    train_video_path = "./train_videos"
-    train_ano_path = "./train_annotations"
-    # train_disparity_path = os.path.join(train_video_path, )
-    if not os.path.exists(train_video_path):
-        raise FileExistsError(f"Not exists {train_video_path}")
-    # scene_id_list = os.listdir(train_disparity_path)
-    for scene_id in os.listdir(train_video_path):
-        scene_id_path = os.path.join(train_video_path, scene_id)
-        scene_id_disparity_path = os.path.join(scene_id_path, "disparity")
+def train():
+    video_path = "./train_videos"
+    ano_path = "./train_annotations"
+    scene_id_dict = {}
+
+    for scene_id in tqdm(sorted(os.listdir(video_path))):
+        if scene_id == ".gitignore":
+            continue
         
-        ''' アノテーションデータの読み取り '''
-        scene_id_json_path = os.path.join(train_ano_path, scene_id+'.json') # anotation .json
-        with open(scene_id_json_path, 'r') as file:
-            ano_data = json.load(file)
-        ''' 右動画ファイルの読み取り'''
-        scene_id_videoR_path = os.path.join(scene_id_path, 'Right.mp4') 
-        cap_file = cv2.VideoCapture(scene_id_videoR_path)
-        delta_t = 1 / cap_file.get(cv2.CAP_PROP_FPS) # delta_t[sec]
-        # pdb.set_trace()
-        if not cap_file.isOpened():
-            raise FileNotFoundError(f"Not found {scene_id_videoR_path}")
-    
-        # 過去ディレクトリ
-        past_distance = []
-        past_velocity = []
-        gt_velocity = []
-        for idx, frame_id in enumerate(sorted(os.listdir(scene_id_disparity_path))):
-            
-            frame_id_path = os.path.join(scene_id_disparity_path, frame_id)
+        # if scene_id != "002":
+        #     continue
+        scene_id_path = os.path.join(video_path, scene_id)
+        videoR = cv2.VideoCapture(os.path.join(scene_id_path, 'Right.mp4'))
+        delta_t = 1 / videoR.get(cv2.CAP_PROP_FPS)
+
+        scene_id_json_path = os.path.join(ano_path, scene_id + '.json')
+        with open(scene_id_json_path, 'r') as f:
+            ano_data = json.load(f)
+
+        frame_list = sorted(os.listdir(os.path.join(scene_id_path, "disparity")))
+        frame_num = len(frame_list)
+
+        velocity_l = []
+        distance = []
+        alpha = 0.5
+        
+        # trackerの定義
+        # params = cv2.TrackerKCF_Params()
+        # params.detect_thresh = 0.4
+        # params.interp_factor = 0.02
+        # tracker = cv2.TrackerKCF_create(params)
+        
+        tracker = cv2.TrackerCSRT_create()
+
+        for idx, frame_id in enumerate(frame_list):
+            print(f"scene_id: {scene_id}", f"Frame No.:{idx + 1}/{frame_num}")
+            frame_id_disparity_path = os.path.join(scene_id_path, "disparity", frame_id)
             frame_id_ano_data = ano_data['sequence'][idx]
+
+            # 距離画像
+            distance_img = read_disparity_raw(frame_id_disparity_path, frame_id_ano_data['inf_DP'])
+            # 静止画
+            _, frame = videoR.read()
             
-            distance_img = read_disparity_raw(frame_id_path, frame_id_ano_data['inf_DP']) # 105x256  original.shape // 4
-            _, frame = cap_file.read()
-            # pre_processing(frame, frame_id_ano_data)
+            weights = MaskRCNN_ResNet50_FPN_Weights.DEFAULT
+            transforms = weights.transforms()
+
+            images = [transforms(Image.fromarray(frame))]
+
+            model = maskrcnn_resnet50_fpn(weights=weights, progress=False)
+            model = model.eval()
+
+            output = model(images)
+            print([weights.meta["categories"][label] for label in output[0]['labels']])
+            pdb.set_trace()
+            # マスクの作成
+            mask = np.zeros_like(frame)
+            mask[:, (frame.shape[1] // 3):((frame.shape[1] // 3) * 2), :] = 1
+            frame = frame * mask
+
+            if idx == 0: # 最初のフレーム
+                bbox = (
+                    int(frame_id_ano_data['TgtXPos_LeftUp']),
+                    int(frame_id_ano_data['TgtYPos_LeftUp']),
+                    int(frame_id_ano_data['TgtWidth']),
+                    int(frame_id_ano_data['TgtHeight'])
+                )
+                tracker.init(frame, bbox)
+            else:   # 以降のフレーム
+                ret, bbox = tracker.update(frame)
+                
+            cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[0]+bbox[2], bbox[1]+bbox[3]), color=(0,0,255))
+            cv2.imwrite("test1.png", frame)
             
-            ''' 先行車までの距離を計算 '''
-            x_crop, y_crop = (int(frame_id_ano_data['TgtXPos_LeftUp'] / 4), int(frame_id_ano_data['TgtYPos_LeftUp'] / 4))
-            width_crop, height_crop = (int(frame_id_ano_data['TgtWidth'] / 4), int(frame_id_ano_data['TgtHeight'] / 4))
-            d_bbox = distance_img[y_crop:y_crop+height_crop, x_crop:x_crop+width_crop] # 距離画像におけるbbox領域
-            # print("距離：")
-            # print("正解:", frame_id_ano_data['Distance_ref'])
-            # print(np.mean(d_bbox)) # 平均値
-            # print(stats.mode(d_bbox).mode[0]) # 最頻値
-            # print(dbscan(d_bbox, eps=0.5, min_samples=5)) # DBSCAN
-            # tmp = cv2.rectangle(distance_img, (x_crop, y_crop), (x_crop+width_crop, y_crop+height_crop), (255, 0, 0))
-            # print("distance score:", frame_id_ano_data['Distance_ref'])
-            # print("avg distance image:", np.mean(distance_img[y_crop:y_crop+height_crop, x_crop:x_crop+width_crop]))
             
-            d_est = dbscan(d_bbox, eps=3.0, min_samples=10)
-            print("推定深度:", d_est, "正解深度:", frame_id_ano_data['Distance_ref'])
-            ''' 最初のフレームだけは計測しない '''
+            resize_scale_box = [int(point / 4) for point in bbox]
+
+            d_bbox = distance_img[resize_scale_box[1]:(resize_scale_box[1] + resize_scale_box[3]), resize_scale_box[0]:(resize_scale_box[0] + resize_scale_box[2])]
+
+            try:
+                d_est = dbscan(d_bbox, eps=3.0, min_samples=10)
+                if idx == 0 or np.abs(d_est - distance[-1]) > 5:
+                    d_est = distance[-1] if distance else d_est
+                print(f"推定距離：{d_est:.3f}, 正解距離: {frame_id_ano_data['Distance_ref']}")
+            except Exception as e:
+                d_est = distance[-1] if distance else 0
+                print(f"推定失敗：{d_est}, エラー：{e}")
+
             if idx == 0:
-                # past_distance.append(frame_id_ano_data['Distance_ref'])
-                past_distance.append(d_est)
-                past_velocity.append(frame_id_ano_data['TgtSpeed_ref'])
-                gt_velocity.append(frame_id_ano_data['TgtSpeed_ref'])
-                continue
+                velocity = 0
+                velocity_l.append(velocity)
+            elif idx == 1:
+                velocity = frame_id_ano_data['OwnSpeed'] + ((d_est - distance[-1]) / delta_t) * 3.6
+                velocity_l.append(velocity)
+            else:
+                # d_avg = (sum(distance[-5:]) + d_est) / (len(distance[-5:]) + 1) if idx > 5 else d_est
+
+                velocity = frame_id_ano_data['OwnSpeed'] + ((d_est - distance[-1]) / delta_t) * 3.6
+                velocity = alpha * velocity_l[-1] + (1 - alpha) * velocity
+                
+                velocity_l.append(velocity)
             
-            ''' ラグ特徴量と先行車速度 '''
-            if idx > 5:
-                d_est = (sum(past_distance[-5:]) + d_est) / (len(past_distance[-5:]) + 1)
-                velocity = frame_id_ano_data['OwnSpeed'] + ((d_est - past_distance[-1]) / delta_t) * 3.6
-            else: 
-                velocity = frame_id_ano_data['OwnSpeed'] + ((d_est - past_distance[-1]) / delta_t) * 3.6
-                # velocity = frame_id_ano_data['OwnSpeed'] + ((frame_id_ano_data['Distance_ref'] - past_distance[-1]) * 3.6) / delta_t
-            print("　　推定:", velocity, "　　正解:", frame_id_ano_data['TgtSpeed_ref'])
-                # velocity = frame_id_ano_data['OwnSpeed'] + (frame_id_ano_data['Distance_ref'] - past_distance[-1]) / delta_t * 3.6
+            print(f"　　先行車推定速度: {velocity:.1f}", f" 正解速度:{frame_id_ano_data['TgtSpeed_ref']}"  "　　自車速度:", frame_id_ano_data['OwnSpeed'])
+                
+
+            distance.append(d_est)
+            
+        videoR.release()
+        scene_id_dict[scene_id] = velocity_l
+
+    with open('train_pred.json', 'w', encoding='utf-8') as f:
+        json.dump(scene_id_dict, f, ensure_ascii=False)
+
+
+def test():
+    video_path = "./test_videos"
+    ano_path = "./test_annotations"
+    scene_id_dict = {}
+
+    for scene_id in tqdm(sorted(os.listdir(video_path))):
+        if scene_id == ".gitignore":
+            continue
+        # if scene_id != "044":
+        #     continue
+        
+        scene_id_path = os.path.join(video_path, scene_id)
+        videoR = cv2.VideoCapture(os.path.join(scene_id_path, 'Right.mp4'))
+        delta_t = 1 / videoR.get(cv2.CAP_PROP_FPS)
+
+        scene_id_json_path = os.path.join(ano_path, scene_id + '.json')
+        with open(scene_id_json_path, 'r') as f:
+            ano_data = json.load(f)
+
+        frame_list = sorted(os.listdir(os.path.join(scene_id_path, "disparity")))
+        frame_num = len(frame_list)
+
+        past_own_velocity = []
+        lost_flag = False
+        past_bbox = 0
+        velocity_l = []
+        distance = []
+        alpha = 0.5
+        
+        # trackerの定義
+        # params = cv2.TrackerKCF_Params()
+        # params.detect_thresh = 0.4
+        # params.interp_factor = 0.02
+        # tracker = cv2.TrackerKCF_create(params)
+        tracker = cv2.TrackerCSRT_create()
+
+        for idx, frame_id in enumerate(frame_list):
+            print(f"scene_id: {scene_id}", f"Frame No.:{idx + 1}/{frame_num}")
+            frame_id_disparity_path = os.path.join(scene_id_path, "disparity", frame_id)
+            frame_id_ano_data = ano_data['sequence'][idx]
+
+            # 距離画像
+            distance_img = read_disparity_raw(frame_id_disparity_path, frame_id_ano_data['inf_DP'])
+            # 静止画
+            _, frame = videoR.read()
+            # マスクの作成
+            mask = np.zeros_like(frame)
+            mask[:, (frame.shape[1] // 4):((frame.shape[1] // 3) * 2), :] = 1
+            frame = frame * mask
+
+            if idx == 0: # 最初のフレーム
+                init_bbox = (
+                    int(frame_id_ano_data['TgtXPos_LeftUp']),
+                    int(frame_id_ano_data['TgtYPos_LeftUp']),
+                    int(frame_id_ano_data['TgtWidth']),
+                    int(frame_id_ano_data['TgtHeight'])
+                )
+                bbox = init_bbox
+                tracker.init(frame, init_bbox)
+            elif lost_flag:
+                result = cv2.matchTemplate(frame, past_bbox, cv2.TM_CCOEFF_NORMED)
+                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+                top_left = max_loc
+                h, w, _ = past_bbox.shape
+                bbox = (top_left[0], top_left[1], w, h)
+                tracker.init(frame, bbox)
+            else:   # 以降のフレーム
+                ret, bbox = tracker.update(frame)
+                bbox = list(bbox)
+                for idx, positon in enumerate(bbox):
+                    if positon < 0:
+                        bbox[idx] = 0
+                    else:
+                        pass
+                if not ret:
+                    lost_flag = True
+                else:
+                    past_bbox = frame[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2],:]
+                
+            cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[0]+bbox[2], bbox[1]+bbox[3]), color=(0,0,255))
+            cv2.imwrite("test1.png", frame)
+
+            resize_scale_box = [int(point / 4) for point in bbox]
+
+            d_bbox = distance_img[resize_scale_box[1]:(resize_scale_box[1] + resize_scale_box[3]), resize_scale_box[0]:(resize_scale_box[0] + resize_scale_box[2])]
+
+            try:
+                d_est = dbscan(d_bbox, eps=3.0, min_samples=10)
+                if idx == 0: 
+                    distance.append(d_est)
+                elif np.abs(d_est - distance[-1]) > 5:
+                    d_est = distance[-1] 
+                print(f"推定距離：{d_est:.3f}")
+            except Exception as e:
+                d_est = distance[-1] if distance else 0
+                print(f"推定失敗：{d_est}, エラー：{e}")
+
+            if idx == 0:
+                velocity_l.append(0)
+            elif idx == 1:
+                velocity = (past_own_velocity[-1] +  frame_id_ano_data['OwnSpeed']) * 0.5 + ((d_est - distance[-1]) / delta_t) * 3.6
+                velocity_l.append(velocity)
+            else:
+                # d_avg = (sum(distance[-5:]) + d_est) / (len(distance[-5:]) + 1) if idx > 5 else d_est
+                velocity = (past_own_velocity[-1] +  frame_id_ano_data['OwnSpeed']) * 0.5 + ((d_est - distance[-1]) / delta_t) * 3.6
+                velocity = alpha * velocity_l[-1] + (1 - alpha) * velocity
+                if velocity < 0:
+                    velocity = 0.
+                print(f"　　先行車推定速度: {velocity:.1f}",  "　　自車速度:", frame_id_ano_data['OwnSpeed'])
+                velocity_l.append(velocity)
+                
+            distance.append(d_est)
+            past_own_velocity.append(frame_id_ano_data['OwnSpeed'])
             
             
-            
-            ''' 過去の情報を保存 '''
-            past_distance.append(d_est)
-            past_velocity.append(velocity)
-            gt_velocity.append(frame_id_ano_data['TgtSpeed_ref'])
-            
-        pdb.set_trace()
+        videoR.release()
+        scene_id_dict[scene_id] = velocity_l
+
+    with open('test_sub.json', 'w', encoding='utf-8') as f:
+        json.dump(scene_id_dict, f, ensure_ascii=False)
 
 
 if __name__ == "__main__":
-    main()
+    # pdb.set_trace()
+    if sys.argv[1] == '--train':
+        print("train")
+        train()
+    elif sys.argv[1] == '--test':
+        print("test")
+        test()
+    else:
+        print("No setting comannd line!")
